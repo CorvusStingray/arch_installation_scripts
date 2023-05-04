@@ -1,83 +1,151 @@
 #!/usr/bin/bash
 
-sed_replace_pattern="s:>:\n>g;s:_::g"
+part_() {
+    sed_replace_pattern="s:>:\n:g;s:_::g"
 
-echo "g>n>_>_>+512M>t>1>n>_>_>+8G>t>_>19>n>_>_>_>w" | sed $sed_replace_pattern | fdisk /dev/sda
-echo "g>n>_>_>_>w" | sed $sed_replace_pattern
+    echo "g>n>_>_>+512M>t>1>n>_>_>+1G>t>_>19>n>_>_>_>w" | sed $sed_replace_pattern | fdisk /dev/sda
+    echo "g>n>_>_>_>w" | sed $sed_replace_pattern | fdisk /dev/sdb
 
-mkfs.fat -F32 -n EFI /dev/sda1
-mkswap -L SWAP /dev/sda2
-swapon /dev/sda2
-mkfs.btrfs -fL ROOT /dev/sda3
-mkfs.btrfs -fL HOME /dev/sdb1
+    mkfs.fat -F32 -n EFI /dev/sda1
+    mkswap -L SWAP /dev/sda2
+    swapon /dev/sda2
+    mkfs.btrfs -fL LINUX /dev/sda3
+    mkfs.btrfs -fL GAMES /dev/sdb1
+}
 
-mount /dev/sda3 /mnt
-btrfs su cr /mnt/@
-btrfs su cr /mnt/@var
-btrfs su cr /mnt/@var_log
-btrfs su cr /mnt/@tmp
-btrfs su cr /mnt/@snapshots
-umount /dev/sda3
-mount -o ssd,noatime,compress=zstd:2,space_cache=v2,discard=async,subvol=@ /dev/sda3 /mnt
-mkdir -p /mnt/{boot/efi,var/log,.snapshots,home}
-mount /dev/sda1 /mnt/boot/efi
-mount -o ssd,noatime,compress=zstd:2,space_cache=v2,discard=async,subvol=@var /dev/sda3 /mnt/var
-mount -o ssd,noatime,compress=zstd:2,space_cache=v2,discard=async,subvol=@var_log /dev/sda3 /mnt/var/log
-mount -o ssd,noatime,compress=zstd:2,space_cache=v2,discard=async,subvol=@tmp /dev/sda3 /mnt/tmp
-mount -o ssd,noatime,compress=zstd:2,space_cache=v2,discard=async,subvol=@snapshots /dev/sda3 /mnt/.snapshots
+mount_() {
+    mount /dev/sda3 /mnt
 
-mount /dev/sdb1 /mnt/home
-btrfs su cr /mnt/home/@home
-umount /dev/sdb1
-mount -o ssd,noatime,compress=zstd:2,space_cache=v2,discard=async,subvol=@home /dev/sdb1 /mnt/home
+    for subvol in "" var tmp home snapshots; do
+        btrfs su cr /mnt/@$subvol
+    done
 
-packages_to_download="
-base
-base-devel
-linux
-linux-headers
-linux-firmware
-grub
-grub-btrfs
-btrfs-progs
-efibootmgr
-amd-ucode
-networkmanager
-networkmanager-openvpn
-ppp
-wpa_supplicant
-bluez
-bluez-utils
-exfat-utils
-zsh
-nano
-neofetch
-python
-python-pip
-git
-"
+    umount /dev/sda3
 
-pacstrap /mnt $packages_to_download
-genfstab -U /mnt >> /mnt/etc/fstab
+    btrfs_mount_options="ssd,noatime,compress=zstd:2,space_cache=v2,discard=async"
 
-after_chroot_commands="
-mkinitcpio -p linux
-grub-install /dev/sda --efi-directory=/boot/efi
-grub-mkconfig -o /boot/grub/grub.cfg
-cat /etc/locale.gen | sed \"s:#en_U:en_U:g;s:#ru_R:ru_R:g\" > /etc/locale.gen
-locale-gen
-echo LANG=en_US.utf-8 > /etc/locale.conf
-echo arch > /etc/hostname
-cat /etc/sudoers | sed \"85 s:# ::g\" > /etc/sudoers
-echo -n \"Enter an username: \"; read username
-useradd -mG wheel -g users -s /bin/zsh $username
-echo -n \"Let's set passwords...\"
-passwd root
-passwd $username
-exit
-"
+    mount -o $btrfs_mount_options,subvol=@ /dev/sda3 /mnt
+    mkdir -p /mnt/{boot/efi,var,tmp,home,.snapshots}
+    mount /dev/sda1 /mnt/boot/efi
 
-arch-chroot /mnt bash -c "$after_chroot_commands"
+    for subvol in var tmp home; do
+        mount -o $btrfs_mount_options,subvol=@$subvol /dev/sda3 /mnt/$subvol
+    done
 
-umount -R /mnt
-shutdown now
+    mount -o $btrfs_mount_options,subvol=@snapshots /dev/sda3 /mnt/.snapshots
+}
+
+install_() {
+    packages_to_install="
+        base
+        base-devel
+        linux
+        linux-headers
+        linux-firmware
+        grub
+        grub-btrfs
+        btrfs-progs
+        efibootmgr
+        amd-ucode
+        networkmanager
+        networkmanager-openvpn
+        ppp
+        wpa_supplicant
+        bluez
+        bluez-utils
+        exfat-utils
+        zsh
+        nano
+        neofetch
+        python
+        python-pip
+        git
+    "
+    gdm_packages="
+        file-roller
+        gdm
+        gnome-calendar
+        gnome-clocks
+        gnome-console
+        gnome-control-center
+        gnome-disk-utility
+        gnome-keyring
+        gnome-logs
+        gnome-menus
+        gnome-session
+        gnome-settings-daemon
+        gnome-shell
+        gnome-shell-extensions
+        gnome-system-monitor
+        nautilus
+        sushi
+        xdg-user-dirs-gtk
+        nvidia
+        nvidia-utils
+        lib32-nvidia-utils
+        vulkan-icd-loader
+        lib32-vulkan-icd-loader
+        nvidia-settings
+    "
+
+    if [ -n "$1" ]; then
+        packages_to_install="$packages_to_install $gdm_packages"
+    fi
+
+    sed -i "93,94 s:#::g" /etc/pacman.conf
+
+    pacstrap /mnt $(echo $packages_to_install)
+}
+
+after_chroot_install_() {
+    hostname=$1
+    admin_username=$2
+    admin_password=$3
+    root_password=$4
+
+    games_directory="/home/$admin_username/Games"
+
+    after_chroot_commands="
+        mkinitcpio -p linux;
+        grub-install /dev/sda --efi-directory=/boot/efi;
+        grub-mkconfig -o /boot/grub/grub.cfg;
+
+        sed -i \"s:#en_U:en_U:g;s:#ru_R:ru_R:g\" /etc/locale.gen;
+        locale-gen;
+        echo LANG=en_US.utf-8 > /etc/locale.conf;
+
+        echo $hostname > /etc/hostname;
+        sed -i \"85 s:# ::g\" /etc/sudoers;
+        useradd -mG wheel -g users -s /bin/zsh $admin_username;
+        echo -e \"$admin_password\n$admin_password\" | passwd $admin_username;
+        echo -e \"$root_password\n$root_password\" | passwd root;
+
+        mkdir $games_directory;
+        mount /dev/sdb1 $games_directory;
+        btrfs su cr $games_directory/@games;
+        umount /dev/sdb1;
+        mount -o ssd,noatime,compress=zstd:2,space_cache=v2,discard=async,subvol=@games /dev/sdb1 $games_directory;
+        chown $admin_username $games_directory;
+        systemctl enable NetworkManager;
+        systemctl enable gdm 2> /dev/null
+    "
+
+    arch-chroot /mnt bash -c "$(echo $after_chroot_commands)"
+    
+    genfstab -U /mnt >> /mnt/etc/fstab
+    umount -R /mnt
+    reboot now
+}
+
+main_() {
+    if ping -c 1 google.com > /dev/null 2>&1; then
+        part_ &&
+        mount_ &&
+        install_ $5 &&
+        after_chroot_install_ $1 $2 $3 $4
+    else
+        echo "Please, check your internet connection"
+    fi
+}
+
+main_ $@
