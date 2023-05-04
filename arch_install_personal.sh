@@ -3,7 +3,7 @@
 part_() {
     sed_replace_pattern="s:>:\n:g;s:_::g"
 
-    echo "g>n>_>_>+512M>t>1>n>_>_>+1G>t>_>19>n>_>_>_>w" | sed $sed_replace_pattern | fdisk /dev/sda
+    echo "g>n>_>_>+512M>t>1>n>_>_>+16G>t>_>19>n>_>_>_>w" | sed $sed_replace_pattern | fdisk /dev/sda
     echo "g>n>_>_>_>w" | sed $sed_replace_pattern | fdisk /dev/sdb
 
     mkfs.fat -F32 -n EFI /dev/sda1
