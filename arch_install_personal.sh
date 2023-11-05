@@ -1,16 +1,12 @@
 #!/usr/bin/bash
 
 part_() {
-    sed_replace_pattern="s:>:\n:g;s:_::g"
-
-    echo "g>n>_>_>+512M>t>1>n>_>_>+16G>t>_>19>n>_>_>_>w" | sed $sed_replace_pattern | fdisk /dev/sda
-    echo "g>n>_>_>_>w" | sed $sed_replace_pattern | fdisk /dev/sdb
+    echo "g>n>_>_>+512M>t>1>n>_>_>+16G>t>_>19>n>_>_>_>w" | sed "s:>:\n:g;s:_::g" | fdisk /dev/sda
 
     mkfs.fat -F32 -n EFI /dev/sda1
     mkswap -L SWAP /dev/sda2
     swapon /dev/sda2
     mkfs.btrfs -fL LINUX /dev/sda3
-    mkfs.btrfs -fL GAMES /dev/sdb1
 }
 
 mount_() {
@@ -92,7 +88,7 @@ install_() {
         packages_to_install="$packages_to_install $gdm_packages"
     fi
 
-    sed -i "93,94 s:#::g" /etc/pacman.conf
+    sed -i "90,91 s:#::g" /etc/pacman.conf
 
     pacstrap /mnt $(echo $packages_to_install)
 }
@@ -102,8 +98,6 @@ after_chroot_install_() {
     admin_username=$2
     admin_password=$3
     root_password=$4
-
-    games_directory="/home/$admin_username/Games"
 
     after_chroot_commands="
         mkinitcpio -p linux;
@@ -115,17 +109,11 @@ after_chroot_install_() {
         echo LANG=en_US.utf-8 > /etc/locale.conf;
 
         echo $hostname > /etc/hostname;
-        sed -i \"85 s:# ::g\" /etc/sudoers;
+        sed -i \"89 s:# ::g\" /etc/sudoers;
         useradd -mG wheel -g users -s /bin/zsh $admin_username;
         echo -e \"$admin_password\n$admin_password\" | passwd $admin_username;
         echo -e \"$root_password\n$root_password\" | passwd root;
-
-        mkdir $games_directory;
-        mount /dev/sdb1 $games_directory;
-        btrfs su cr $games_directory/@games;
-        umount /dev/sdb1;
-        mount -o ssd,noatime,compress=zstd:2,space_cache=v2,discard=async,subvol=@games /dev/sdb1 $games_directory;
-        chown $admin_username $games_directory;
+        
         systemctl enable NetworkManager;
         systemctl enable gdm 2> /dev/null
     "
